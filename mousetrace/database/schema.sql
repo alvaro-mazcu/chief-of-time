@@ -1,0 +1,107 @@
+-- SQLite schema for MouseTrace
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+
+-- Sessions capture the lifespan of a collector run (for easy filtering)
+CREATE TABLE IF NOT EXISTS sessions (
+    id            INTEGER PRIMARY KEY,
+    started_at    REAL    NOT NULL,        -- epoch seconds
+    ended_at      REAL,                    -- set on clean shutdown
+    hostname      TEXT    NOT NULL,
+    username      TEXT    NOT NULL,
+    os_version    TEXT    NOT NULL
+) STRICT;
+
+-- Applications are keyed by bundle identifier for stability
+CREATE TABLE IF NOT EXISTS applications (
+    bundle_id     TEXT PRIMARY KEY,
+    app_name      TEXT    NOT NULL,
+    first_seen_ts REAL    NOT NULL
+) STRICT;
+
+-- Mouse events (movement, clicks, scroll)
+CREATE TABLE IF NOT EXISTS pointer_events (
+    id           INTEGER PRIMARY KEY,
+    ts           REAL    NOT NULL,         -- epoch seconds
+    kind         TEXT    NOT NULL CHECK (kind IN ('move','click_down','click_up','scroll')),
+    x            REAL    NOT NULL,
+    y            REAL    NOT NULL,
+    extra        TEXT,                      -- button or scroll deltas
+    bundle_id    TEXT    NOT NULL REFERENCES applications(bundle_id) ON UPDATE CASCADE,
+    pid          INTEGER,                   -- owning process id at the time
+    window_num   INTEGER,                   -- kCGWindowNumber when available
+    session_id   INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_pointer_ts ON pointer_events(ts);
+CREATE INDEX IF NOT EXISTS idx_pointer_bundle_ts ON pointer_events(bundle_id, ts);
+CREATE INDEX IF NOT EXISTS idx_pointer_kind_ts ON pointer_events(kind, ts);
+
+-- Focus switches (app-level and window-level)
+CREATE TABLE IF NOT EXISTS switches (
+    id              INTEGER PRIMARY KEY,
+    ts              REAL    NOT NULL,
+    kind            TEXT    NOT NULL CHECK (kind IN ('app','window')),
+
+    from_bundle     TEXT REFERENCES applications(bundle_id) ON UPDATE CASCADE,
+    from_pid        INTEGER,
+    from_window_num INTEGER,
+    from_window_title TEXT,
+
+    to_bundle       TEXT REFERENCES applications(bundle_id) ON UPDATE CASCADE,
+    to_pid          INTEGER,
+    to_window_num   INTEGER,
+    to_window_title TEXT,
+
+    session_id      INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_switches_ts ON switches(ts);
+CREATE INDEX IF NOT EXISTS idx_switches_kind_ts ON switches(kind, ts);
+CREATE INDEX IF NOT EXISTS idx_switches_to_bundle_ts ON switches(to_bundle, ts);
+
+-- Helpful views for analysis
+CREATE VIEW IF NOT EXISTS vw_clicks_by_app AS
+SELECT a.app_name,
+       p.bundle_id,
+       COUNT(*) AS clicks
+FROM pointer_events p
+JOIN applications a ON a.bundle_id = p.bundle_id
+WHERE p.kind IN ('click_down','click_up')
+GROUP BY p.bundle_id;
+
+CREATE VIEW IF NOT EXISTS vw_moves_share_by_app AS
+SELECT a.app_name,
+       p.bundle_id,
+       COUNT(*) AS moves,
+       ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM pointer_events WHERE kind='move'), 2) AS pct
+FROM pointer_events p
+JOIN applications a ON a.bundle_id = p.bundle_id
+WHERE p.kind = 'move'
+GROUP BY p.bundle_id
+ORDER BY moves DESC;
+
+CREATE VIEW IF NOT EXISTS vw_switches_per_hour AS
+SELECT strftime('%Y-%m-%d %H:00', ts, 'unixepoch') AS hour,
+       SUM(kind='app')    AS app_switches,
+       SUM(kind='window') AS window_switches
+FROM switches
+GROUP BY hour
+ORDER BY hour;
+
+-- Key events (keyboard)
+CREATE TABLE IF NOT EXISTS key_events (
+    id           INTEGER PRIMARY KEY,
+    ts           REAL    NOT NULL,
+    kind         TEXT    NOT NULL CHECK (kind IN ('key_down','key_up')),
+    key          TEXT,
+    modifiers    TEXT,
+    bundle_id    TEXT    NOT NULL REFERENCES applications(bundle_id) ON UPDATE CASCADE,
+    pid          INTEGER,
+    window_num   INTEGER,
+    session_id   INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_key_ts ON key_events(ts);
+CREATE INDEX IF NOT EXISTS idx_key_bundle_ts ON key_events(bundle_id, ts);
+

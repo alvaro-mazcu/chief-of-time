@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mousetrace"
+version = "0.1.0"
+description = "macOS pointer + window telemetry to SQLite"
+readme = "README.md"
+authors = [{ name = "Your Name" }]
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+  "pynput>=1.7",
+  "pyobjc>=10.2",
+  "psutil>=5.9",
+  "fastapi>=0.111",
+  "uvicorn>=0.23",
+  "openai>=1.40",
+  "python-dotenv>=1.0",
+]
+
+[project.urls]
+Homepage = "https://example.com/mousetrace"
+
+[project.scripts]
+mousetrace = "mousetrace.cli:main"
+
+[tool.setuptools.package-data]
+mousetrace = ["database/schema.sql"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mousetrace*"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "UP", "B"]

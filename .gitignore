@@ -1,0 +1,23 @@
+# venvs
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# DB files
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.sqlite-wal
+*.sqlite-shm
+
+# local environment
+.env
