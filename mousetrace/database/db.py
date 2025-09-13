@@ -94,6 +94,31 @@ class Database:
         self._conn.commit()
         return int(cur.lastrowid)
 
+    # --- wellness data ---
+    def insert_sleep_log(self, ts: float, duration_sec: float, score: Optional[float]) -> int:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO sleep_logs(ts, duration_sec, score, created_at)
+            VALUES (?,?,?,?)
+            """,
+            (ts, duration_sec, score, time.time()),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
+
+    def insert_activity_log(self, ts: float, kind: str, duration_sec: float, intensity: Optional[str], kcal: Optional[float]) -> int:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO activity_logs(ts, kind, duration_sec, intensity, kcal, created_at)
+            VALUES (?,?,?,?,?,?)
+            """,
+            (ts, kind, duration_sec, intensity, kcal, time.time()),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
+
 
 class DBWriter:
     """Threaded writer that batches commits for low overhead."""

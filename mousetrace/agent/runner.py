@@ -22,9 +22,9 @@ class AgentRunner:
         self.tools: Dict[str, Tuple[ToolFunc, dict]]
         self.tools, self.tool_specs = build_tools(cfg.db_path, cfg.schema_path)
 
-    def ask(self, question: str, model: Optional[str] = None, max_turns: int = 8) -> dict:
+    def ask(self, question: str, model: Optional[str] = None, max_turns: int = 8, system_prompt: Optional[str] = None) -> dict:
         messages: List[dict] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
             {"role": "user", "content": question},
         ]
         used_tools: List[dict] = []
@@ -72,4 +72,3 @@ class AgentRunner:
             return {"answer": answer, "used_tools": used_tools}
 
         return {"answer": "Reached tool-use limit without a final answer.", "used_tools": used_tools}
-

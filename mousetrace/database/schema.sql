@@ -130,3 +130,27 @@ CREATE TABLE IF NOT EXISTS screenshots (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_screenshots_ts ON screenshots(ts);
+
+-- Sleep quality logs
+CREATE TABLE IF NOT EXISTS sleep_logs (
+    id            INTEGER PRIMARY KEY,
+    ts            REAL    NOT NULL,        -- log/start time (epoch seconds)
+    duration_sec  REAL    NOT NULL,        -- total sleep duration in seconds
+    score         REAL,                    -- 0..1 quality score
+    created_at    REAL    NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_sleep_ts ON sleep_logs(ts);
+
+-- Physical activity logs
+CREATE TABLE IF NOT EXISTS activity_logs (
+    id            INTEGER PRIMARY KEY,
+    ts            REAL    NOT NULL,
+    kind          TEXT    NOT NULL,        -- e.g., 'weight_lifting', 'running'
+    duration_sec  REAL    NOT NULL,
+    intensity     TEXT,                    -- e.g., 'low','medium','high'
+    kcal          REAL,                    -- calories burned
+    created_at    REAL    NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity_logs(ts);

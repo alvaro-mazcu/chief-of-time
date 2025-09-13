@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from ..agent import AgentConfig, AgentRunner
+from ..agent.daily_prompt import DAILY_SYSTEM_PROMPT
 from ..config import get_openai_api_key
 from ..analysis import summary as db_summary
 from ..database.db import Database
@@ -158,6 +159,25 @@ def create_app(db_path: Path) -> FastAPI:
             db.close()
 
     return app
+
+    # Daily summary endpoint (agentic)
+    @app.get("/daily-summary")
+    def daily_summary(hours: int = 24, model: Optional[str] = None, x_openai_key: Optional[str] = Header(default=None)) -> dict:
+        # Construct runner with potential header override
+        try:
+            key = get_openai_api_key(x_openai_key)
+        except RuntimeError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+        runner = AgentRunner(AgentConfig(db_path=db_path, schema_path=schema_path), api_key=key)
+        # Compose a clear user instruction for the daily agent
+        h = max(1, min(int(hours), 72))
+        seconds = h * 3600
+        question = (
+            f"Create a daily summary for the last {h} hours (window={seconds}s). "
+            f"Use tools to gather facts and combine signals across inputs, screenshots, assessments, sleep, and activity."
+        )
+        result = runner.ask(question=question, model=model, system_prompt=DAILY_SYSTEM_PROMPT)
+        return result
 
 
 # Uvicorn reload/workers require an importable factory with no args.

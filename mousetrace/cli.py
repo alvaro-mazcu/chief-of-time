@@ -13,6 +13,7 @@ from .sight.service import run_sight, SightConfig
 
 import uvicorn
 import os
+import time
 
 
 def cmd_init_db(args: argparse.Namespace) -> None:
@@ -168,6 +169,28 @@ def main() -> None:
         run_sight(cfg)
 
     p_sight.set_defaults(func=cmd_sight)
+
+    # Seed wellness demo data
+    p_seed = sub.add_parser("seed-health", help="Insert demo sleep and activity records into the DB")
+    p_seed.add_argument("--db", required=True, help="Path to SQLite database file")
+
+    def cmd_seed(args: argparse.Namespace) -> None:
+        db_path = Path(args.db).expanduser()
+        db = Database(db_path)
+        try:
+            db.init_schema()
+            # Insert: Sleep 8h30m with score 0.95
+            sleep_duration = 8 * 3600 + 30 * 60  # 30600 seconds
+            db.insert_sleep_log(ts=time.time(), duration_sec=float(sleep_duration), score=0.95)
+
+            # Insert: Activity 1h10m weight lifting, high intensity, 302 kcal
+            act_duration = 1 * 3600 + 10 * 60  # 4200 seconds
+            db.insert_activity_log(ts=time.time(), kind="weight_lifting", duration_sec=float(act_duration), intensity="high", kcal=302.0)
+            print("Seeded: sleep(8h30m, score=0.95), activity(1h10m weight_lifting, high, 302 kcal)")
+        finally:
+            db.close()
+
+    p_seed.set_defaults(func=cmd_seed)
 
     args = p.parse_args()
     args.func(args)

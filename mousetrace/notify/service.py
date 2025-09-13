@@ -74,7 +74,16 @@ def _subtitle_for_verdict(verdict: str) -> str:
     return "🟡 OKAY — KEEP FOCUS 🟡"
 
 
-def _send_notification(title: str, subtitle: str, icon_path: Optional[str] = None) -> None:
+def _sound_for_verdict(verdict: str) -> str:
+    v = verdict.lower().strip()
+    if v == "good":
+        return "mario_happy"
+    if v == "bad":
+        return "mario_bad"
+    return "mario_neutral"
+
+
+def _send_notification(title: str, subtitle: str, sound: str = "default", icon_path: Optional[str] = None) -> None:
     if mac_client is None:
         # Fallback to stdout if mac_notifications is not installed
         print(f"[notify] {title} — {subtitle}")
@@ -82,7 +91,7 @@ def _send_notification(title: str, subtitle: str, icon_path: Optional[str] = Non
     kwargs = {
         "title": title,
         "subtitle": subtitle,
-        "sound": "default",
+        "sound": sound,
     }
     if icon_path:
         kwargs["icon"] = icon_path
@@ -115,7 +124,8 @@ def run_notifier(cfg: NotifierConfig) -> None:
             answer = res.get("answer", "").strip()
             verdict, score = _parse_verdict_and_score(answer)
             subtitle = _subtitle_for_verdict(verdict)
-            _send_notification(title="Chief of Time says...", subtitle=subtitle, icon_path=cfg.icon_path)
+            sound = _sound_for_verdict(verdict)
+            _send_notification(title="Chief of Time says...", subtitle=subtitle, icon_path=cfg.icon_path, sound=sound)
 
             # Persist the assessment for the window
             window_start = window_end - float(interval)
