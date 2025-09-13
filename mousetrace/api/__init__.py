@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from ..agent import AgentConfig, AgentRunner
 from ..config import get_openai_api_key
 from ..analysis import summary as db_summary
+from ..database.db import Database
 
 
 class InsightRequest(BaseModel):
@@ -59,6 +60,44 @@ def create_app(db_path: Path) -> FastAPI:
             runner = AgentRunner(AgentConfig(db_path=db_path, schema_path=schema_path), api_key=req.api_key)
         result = runner.ask(req.question, model=req.model)
         return InsightResponse(**result)
+
+    class Assessment(BaseModel):
+        id: int
+        start_ts: float
+        end_ts: float
+        verdict: str
+        score: Optional[float] = None
+        reason: Optional[str] = None
+        created_at: float
+
+    @app.get("/assessments", response_model=List[Assessment])
+    def list_assessments(limit: int = 50) -> List[Assessment]:
+        n = max(1, min(limit, 500))
+        db = Database(db_path)
+        try:
+            rows = db._conn.execute(
+                """
+                SELECT id, start_ts, end_ts, verdict, score, reason, created_at
+                FROM productivity_assessments
+                ORDER BY start_ts DESC
+                LIMIT ?
+                """,
+                (n,),
+            ).fetchall()
+            return [
+                Assessment(
+                    id=int(r[0]),
+                    start_ts=float(r[1]),
+                    end_ts=float(r[2]),
+                    verdict=str(r[3]),
+                    score=(float(r[4]) if r[4] is not None else None),
+                    reason=(str(r[5]) if r[5] is not None else None),
+                    created_at=float(r[6]),
+                )
+                for r in rows
+            ]
+        finally:
+            db.close()
 
     return app
 

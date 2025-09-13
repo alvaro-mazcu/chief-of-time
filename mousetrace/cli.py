@@ -8,6 +8,7 @@ from .config import CaptureConfig
 from .database.db import Database
 from .capture import run_collector
 from .api import create_app
+from .notify.service import run_notifier, NotifierConfig
 
 import uvicorn
 import os
@@ -17,6 +18,25 @@ def cmd_init_db(args: argparse.Namespace) -> None:
     db = Database(Path(args.db))
     db.init_schema()
     print(f"Initialized schema at {db.path}")
+    db.close()
+
+
+def cmd_recreate_db(args: argparse.Namespace) -> None:
+    db_path = Path(args.db).expanduser()
+    if not args.yes:
+        print("Refusing to recreate DB without --yes (destructive).")
+        return
+    # Remove DB and SQLite sidecar files if present
+    for suffix in ("", "-wal", "-shm"):
+        p = Path(str(db_path) + suffix)
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db = Database(db_path)
+    db.init_schema()
+    print(f"Recreated schema at {db.path}")
     db.close()
 
 
@@ -58,6 +78,11 @@ def main() -> None:
     p_init.add_argument("--db", required=True, help="Path to SQLite database file")
     p_init.set_defaults(func=cmd_init_db)
 
+    p_recreate = sub.add_parser("recreate-db", help="Delete the DB and create a fresh schema (destructive)")
+    p_recreate.add_argument("--db", required=True, help="Path to SQLite database file")
+    p_recreate.add_argument("--yes", action="store_true", help="Confirm destructive action")
+    p_recreate.set_defaults(func=cmd_recreate_db)
+
     p_run = sub.add_parser("run", help="Run the collector")
     p_run.add_argument("--db", required=True, help="Path to SQLite database file")
     p_run.add_argument("--poll-hz", type=int, default=10, help="App/window polling frequency (Hz)")
@@ -89,6 +114,40 @@ def main() -> None:
             uvicorn.run(app, host=args.host, port=args.port, reload=False)
 
     p_srv.set_defaults(func=cmd_serve)
+
+    # Notify subcommand: periodic productivity notifications
+    p_notify = sub.add_parser("notify", help="Send periodic macOS notifications with recent productivity verdicts")
+    p_notify.add_argument("--db", required=True, help="Path to SQLite database file")
+    p_notify.add_argument("--interval", type=int, default=120, help="Notification interval in seconds (min 30)")
+    p_notify.add_argument("--icon", default=None, help="Path to icon image for notifications")
+    p_notify.add_argument("--model", default=None, help="Override OpenAI model for the Agent")
+    p_notify.add_argument("--with-collector", action="store_true", help="Also start the event collector in the background")
+
+    def cmd_notify(args: argparse.Namespace) -> None:
+        db_path = Path(args.db).expanduser()
+        schema_path = Path(__file__).resolve().parent / "database" / "schema.sql"
+        # Ensure schema exists so Agent tools don't fail on first run
+        db = Database(db_path)
+        db.init_schema()
+        db.close()
+        # Optionally start the collector in the background so the DB is populated
+        if args.with_collector:
+            import threading
+            cap_cfg = CaptureConfig(
+                db_path=db_path,
+            )
+            threading.Thread(target=run_collector, args=(cap_cfg,), daemon=True).start()
+
+        cfg = NotifierConfig(
+            db_path=db_path,
+            schema_path=schema_path,
+            interval_sec=args.interval,
+            icon_path=args.icon,
+            model=args.model,
+        )
+        run_notifier(cfg)
+
+    p_notify.set_defaults(func=cmd_notify)
 
     args = p.parse_args()
     args.func(args)

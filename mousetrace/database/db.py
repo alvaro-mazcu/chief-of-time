@@ -70,6 +70,18 @@ class Database:
     def writer(self) -> "DBWriter":
         return DBWriter(self._conn)
 
+    # --- assessments ---
+    def insert_assessment(self, start_ts: float, end_ts: float, verdict: str, score: Optional[float], reason: Optional[str] = None) -> None:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO productivity_assessments(start_ts, end_ts, verdict, score, reason, created_at)
+            VALUES (?,?,?,?,?,?)
+            """,
+            (start_ts, end_ts, verdict, score, reason, time.time()),
+        )
+        self._conn.commit()
+
 
 class DBWriter:
     """Threaded writer that batches commits for low overhead."""
