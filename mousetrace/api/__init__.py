@@ -99,6 +99,64 @@ def create_app(db_path: Path) -> FastAPI:
         finally:
             db.close()
 
+    class Screenshot(BaseModel):
+        id: int
+        ts: float
+        path: str
+        summary: Optional[str] = None
+        verdict: Optional[str] = None
+        created_at: float
+
+    @app.get("/screenshots", response_model=List[Screenshot])
+    def list_screenshots(limit: int = 50) -> List[Screenshot]:
+        n = max(1, min(limit, 200))
+        db = Database(db_path)
+        try:
+            rows = db._conn.execute(
+                """
+                SELECT id, ts, path, summary, verdict, created_at
+                FROM screenshots
+                ORDER BY ts DESC
+                LIMIT ?
+                """,
+                (n,),
+            ).fetchall()
+            return [
+                Screenshot(
+                    id=int(r[0]),
+                    ts=float(r[1]),
+                    path=str(r[2]),
+                    summary=(str(r[3]) if r[3] is not None else None),
+                    verdict=(str(r[4]) if r[4] is not None else None),
+                    created_at=float(r[5]),
+                )
+                for r in rows
+            ]
+        finally:
+            db.close()
+
+    @app.get("/screenshots/{sid}")
+    def get_screenshot(sid: int) -> dict:
+        db = Database(db_path)
+        try:
+            row = db._conn.execute(
+                "SELECT id, ts, path, ocr_text, summary, verdict, created_at FROM screenshots WHERE id=?",
+                (sid,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Not found")
+            return {
+                "id": int(row[0]),
+                "ts": float(row[1]),
+                "path": str(row[2]),
+                "ocr_text": row[3],
+                "summary": row[4],
+                "verdict": row[5],
+                "created_at": float(row[6]),
+            }
+        finally:
+            db.close()
+
     return app
 
 

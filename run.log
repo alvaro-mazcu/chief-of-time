@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "/Library/Frameworks/Python.framework/Versions/3.10/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/Library/Frameworks/Python.framework/Versions/3.10/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/Users/alvaromazcunan/Projects/chief-of-time/mousetrace/__main__.py", line 1, in <module>
+    from .cli import main
+  File "/Users/alvaromazcunan/Projects/chief-of-time/mousetrace/cli.py", line 12, in <module>
+    from .sight.service import run_sight, SightConfig
+  File "/Users/alvaromazcunan/Projects/chief-of-time/mousetrace/sight/service.py", line 9, in <module>
+    from PIL import ImageGrab, Image  # type: ignore
+ModuleNotFoundError: No module named 'PIL'

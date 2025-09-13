@@ -9,6 +9,7 @@ from .database.db import Database
 from .capture import run_collector
 from .api import create_app
 from .notify.service import run_notifier, NotifierConfig
+from .sight.service import run_sight, SightConfig
 
 import uvicorn
 import os
@@ -148,6 +149,25 @@ def main() -> None:
         run_notifier(cfg)
 
     p_notify.set_defaults(func=cmd_notify)
+
+    # Sight: periodic screenshots -> OCR -> LLM summary
+    p_sight = sub.add_parser("sight", help="Capture screenshots periodically, run OCR + LLM summary, store in DB")
+    p_sight.add_argument("--db", required=True, help="Path to SQLite database file")
+    p_sight.add_argument("--out-dir", default=str(Path.home() / "Pictures" / "mousetrace"), help="Directory to store screenshots")
+    p_sight.add_argument("--interval", type=int, default=300, help="Seconds between screenshots (default 300)")
+    p_sight.add_argument("--model", default=None, help="Override OpenAI model for summarization")
+
+    def cmd_sight(args: argparse.Namespace) -> None:
+        db_path = Path(args.db).expanduser()
+        out_dir = Path(args.out_dir).expanduser()
+        # Ensure schema exists
+        db = Database(db_path)
+        db.init_schema()
+        db.close()
+        cfg = SightConfig(db_path=db_path, out_dir=out_dir, interval_sec=args.interval, model=args.model)
+        run_sight(cfg)
+
+    p_sight.set_defaults(func=cmd_sight)
 
     args = p.parse_args()
     args.func(args)

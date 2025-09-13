@@ -117,3 +117,16 @@ CREATE TABLE IF NOT EXISTS productivity_assessments (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_assessments_start_ts ON productivity_assessments(start_ts);
+
+-- Screenshots captured for OCR + context analysis
+CREATE TABLE IF NOT EXISTS screenshots (
+    id         INTEGER PRIMARY KEY,
+    ts         REAL    NOT NULL,
+    path       TEXT    NOT NULL,
+    ocr_text   TEXT,
+    summary    TEXT,
+    verdict    TEXT    CHECK (verdict IN ('productive','neutral','distracting')),
+    created_at REAL    NOT NULL
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_screenshots_ts ON screenshots(ts);

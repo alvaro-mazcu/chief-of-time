@@ -82,6 +82,18 @@ class Database:
         )
         self._conn.commit()
 
+    def insert_screenshot(self, ts: float, path: str, ocr_text: Optional[str], summary: Optional[str], verdict: Optional[str]) -> int:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO screenshots(ts, path, ocr_text, summary, verdict, created_at)
+            VALUES (?,?,?,?,?,?)
+            """,
+            (ts, path, ocr_text, summary, verdict, time.time()),
+        )
+        self._conn.commit()
+        return int(cur.lastrowid)
+
 
 class DBWriter:
     """Threaded writer that batches commits for low overhead."""

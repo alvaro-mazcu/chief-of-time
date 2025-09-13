@@ -56,6 +56,49 @@ def tool_top_apps(db_path: Path, metric: str = "clicks", limit: int = 10) -> Lis
         conn.close()
 
 
+def tool_sight_stats(db_path: Path, seconds: int = 600) -> dict:
+    """Return counts, percentages, and a 0..1 score from screenshot verdicts in the last N seconds.
+
+    Score heuristic: productive=1.0, neutral=0.5, distracting=0.0.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        # Count verdicts over the time window
+        rows = conn.execute(
+            """
+            SELECT verdict, COUNT(*) AS n
+            FROM screenshots
+            WHERE ts >= strftime('%s','now') - ?
+            GROUP BY verdict
+            """,
+            (int(seconds),),
+        ).fetchall()
+        counts = { (r[0] or ""): int(r[1]) for r in rows }
+        total = sum(counts.values())
+        prod = counts.get("productive", 0)
+        neut = counts.get("neutral", 0)
+        dist = counts.get("distracting", 0)
+        if total > 0:
+            score = (prod * 1.0 + neut * 0.5 + dist * 0.0) / float(total)
+            pct = {
+                "productive": round(100.0 * prod / total, 2),
+                "neutral": round(100.0 * neut / total, 2),
+                "distracting": round(100.0 * dist / total, 2),
+            }
+        else:
+            score = None
+            pct = {"productive": 0.0, "neutral": 0.0, "distracting": 0.0}
+        return {
+            "window_seconds": int(seconds),
+            "total": total,
+            "counts": {"productive": prod, "neutral": neut, "distracting": dist},
+            "percentages": pct,
+            "score": (round(score, 3) if score is not None else None),
+        }
+    finally:
+        conn.close()
+
+
 ToolFunc = Callable[..., Any]
 
 
@@ -118,7 +161,22 @@ def build_tools(db_path: Path, schema_path: Path) -> Tuple[Dict[str, Tuple[ToolF
                 },
             },
         ),
+        "sight_stats": (
+            lambda seconds=600: tool_sight_stats(db_path, seconds=seconds),
+            {
+                "type": "function",
+                "function": {
+                    "name": "sight_stats",
+                    "description": "Screenshot verdict mix (productive/neutral/distracting) and 0..1 score over last N seconds.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "seconds": {"type": "integer", "minimum": 60, "maximum": 86400, "default": 600},
+                        },
+                    },
+                },
+            },
+        ),
     }
     tool_specs = [spec for _, spec in tools.values()]
     return tools, tool_specs
-
