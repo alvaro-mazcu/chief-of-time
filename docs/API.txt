@@ -1,0 +1,75 @@
+MouseTrace API (plain text)
+===========================
+
+Base URL: http://127.0.0.1:8000
+
+Authentication
+- Only /insights and /daily-summary require an OpenAI API key.
+- Preferred: set OPENAI_API_KEY in the server environment.
+- Overrides: X-OpenAI-Key header (both endpoints). For /insights, api_key in the JSON body also overrides.
+
+Data Types
+- Timestamps: Unix epoch seconds (float)
+- Verdicts:
+  - Productivity assessments: good | neutral | bad
+  - Screenshot classifier: productive | neutral | distracting
+
+Endpoints
+---------
+GET /health
+- Purpose: Liveness probe
+- Response: { "status": "ok" }
+
+GET /schema
+- Purpose: Database schema DDL text
+- Response: { "schema": "<full DDL text>" }
+
+GET /summary
+- Purpose: High-level lifetime summary
+- Response fields:
+  - clicks (int)
+  - moves (int)
+  - switches (int)
+  - keypresses (int)
+  - kpm_overall (float)
+  - kpm_last_60m (float)
+  - best_kpm (float)
+  - best_kpm_window (object|null): { start_ts, end_ts, keypresses }
+  - top_apps (array): [ [app_name, clicks], ... ]
+
+POST /insights
+- Purpose: Agentic Q&A using tools
+- Auth: OpenAI key required
+- Request JSON:
+  { "question": "...", "model": "optional", "api_key": "optional" }
+- Response JSON:
+  { "answer": "...", "used_tools": [ { "name": "...", "args": { ... } } ] }
+
+GET /assessments?limit=50
+- Purpose: Latest productivity verdicts from notifier
+- Query: limit (default 50, max 500)
+- Response: array of objects with fields: id, start_ts, end_ts, verdict, score, reason, created_at
+
+GET /screenshots?limit=50
+- Purpose: Latest screenshots with summaries
+- Query: limit (default 50, max 200)
+- Response: array of objects with fields: id, ts, path, summary, verdict, created_at
+
+GET /screenshots/{id}
+- Purpose: Full screenshot record (includes OCR text)
+- Response: object with fields: id, ts, path, ocr_text, summary, verdict, created_at
+
+GET /daily-summary?hours=24
+- Purpose: Human daily report combining activity + screenshots + assessments + sleep + activity
+- Auth: OpenAI key required
+- Query: hours (1–72, default 24), model (optional)
+- Response: object with fields: answer, used_tools
+  - answer: 2–3 sentence overview + 4–6 bullets + two lifestyle predictions (work/off-work) + final 'score=0.xx'
+
+Operational Notes
+- Initialize schema and start producers for data:
+  python -m mousetrace init-db --db mouse_trace.sqlite3
+  python -m mousetrace run --db mouse_trace.sqlite3
+  python -m mousetrace notify --db mouse_trace.sqlite3 --interval 120
+  python -m mousetrace sight --db mouse_trace.sqlite3 --interval 300 --out-dir ~/Pictures/mousetrace
+- macOS permissions: Accessibility (input capture), Screen Recording (screenshots)
