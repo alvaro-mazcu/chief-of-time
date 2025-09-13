@@ -158,8 +158,6 @@ def create_app(db_path: Path) -> FastAPI:
         finally:
             db.close()
 
-    return app
-
     # Daily summary endpoint (agentic)
     @app.get("/daily-summary")
     def daily_summary(hours: int = 24, model: Optional[str] = None, x_openai_key: Optional[str] = Header(default=None)) -> dict:
@@ -179,6 +177,7 @@ def create_app(db_path: Path) -> FastAPI:
         result = runner.ask(question=question, model=model, system_prompt=DAILY_SYSTEM_PROMPT)
         return result
 
+    return app
 
 # Uvicorn reload/workers require an importable factory with no args.
 # The CLI sets MOUSETRACE_DB_PATH before running with --reload.
