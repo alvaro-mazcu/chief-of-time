@@ -4,7 +4,8 @@ import os
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, File, UploadFile
+from fastapi import status as http_status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -323,6 +324,226 @@ def create_app(db_path: Path) -> FastAPI:
             plan=_json.loads(row["plan_json"]),
             created_at=row["created_at"],
         )
+
+    # ---- Audio upload and availability ----
+    @app.post("/upload-audio", status_code=http_status.HTTP_201_CREATED)
+    async def upload_audio(file: UploadFile = File(...)) -> dict:
+        import time as _time
+        import uuid
+        from pathlib import Path as _Path
+
+        if file is None:
+            raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Missing file")
+
+        allowed = {
+            "audio/webm": "webm",
+            "audio/ogg": "ogg",
+            "audio/mpeg": "mp3",
+        }
+        mime = (file.content_type or "").lower()
+        if mime not in allowed:
+            raise HTTPException(status_code=http_status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=f"Unsupported type: {mime}")
+
+        # Storage layout
+        base_dir = _Path.cwd() / "uploads" / "audio"
+        base_dir.mkdir(parents=True, exist_ok=True)
+        ts = int(_time.time())
+        ext = allowed[mime]
+        fname = f"voice-note-{ts}-{uuid.uuid4().hex[:8]}.{ext}"
+        dest = base_dir / fname
+
+        # Stream to disk with size check (25 MB)
+        max_bytes = 25 * 1024 * 1024
+        total = 0
+        try:
+            with dest.open("wb") as out:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        try:
+                            out.close()
+                            dest.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                        raise HTTPException(status_code=http_status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File too large (max 25MB)")
+                    out.write(chunk)
+        except HTTPException:
+            raise
+        except Exception as e:
+            try:
+                dest.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise HTTPException(status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Storage error: {e}")
+
+        rel_path = str(_Path("uploads") / "audio" / fname)
+        return {
+            "path": rel_path,
+            "filename": fname,
+            "mime_type": mime,
+            "size_bytes": total,
+        }
+
+    class AudioAvailableRequest(BaseModel):
+        path: str
+        context: Optional[str] = None
+        plan_date: Optional[str] = None
+        user_id: Optional[str] = None
+
+    @app.post("/audio-available", status_code=http_status.HTTP_202_ACCEPTED)
+    async def audio_available(request: Request, x_openai_key: Optional[str] = Header(default=None)) -> dict:
+        """Transcribe the uploaded audio with Whisper and convert to a daily plan, storing it.
+
+        Accepts flexible JSON or form payloads to avoid 422s from strict validation.
+        """
+        import json as _json
+        import time as _time
+        from datetime import datetime
+        from pathlib import Path as _Path
+        from openai import OpenAI
+
+        # Parse body robustly (JSON or form)
+        payload: dict
+        try:
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Body must be a JSON object")
+        except Exception:
+            try:
+                form = await request.form()
+                payload = {k: form.get(k) for k in ("path", "context", "plan_date", "user_id")}
+            except Exception:
+                payload = {}
+
+        path_val = payload.get("path")
+        if not path_val:
+            raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="Field 'path' is required")
+
+        audio_path = _Path(path_val)
+        if not audio_path.is_absolute():
+            audio_path = _Path.cwd() / audio_path
+        if not audio_path.exists():
+            raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="File not found at path")
+
+        # OpenAI client
+        try:
+            key = get_openai_api_key(x_openai_key)
+        except RuntimeError as e:
+            raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+        client = OpenAI(api_key=key)
+
+        # 1) Transcribe with Whisper
+        try:
+            with audio_path.open("rb") as f:
+                tr = client.audio.transcriptions.create(model="whisper-1", file=f)
+            transcript = (tr.text or "").strip()
+        except Exception as e:
+            raise HTTPException(status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Transcription failed: {e}")
+
+        # 2) Convert transcript to daily plan JSON via LLM
+        PLAN_SYSTEM = (
+            "You convert spoken notes into a daily plan as JSON. "
+            "Return ONLY a JSON array named implicitly (no key) with todo items. "
+            "Each item is an object: {id: string, title: string, completed: boolean, priority: one of 'high','medium','low'}. "
+            "Infer sensible priorities from wording; default completed=false. No extra text."
+        )
+        try:
+            comp = client.chat.completions.create(
+                model=AgentConfig(db_path=db_path, schema_path=schema_path).model,
+                messages=[
+                    {"role": "system", "content": PLAN_SYSTEM},
+                    {"role": "user", "content": transcript},
+                ],
+                temperature=0.2,
+            )
+            raw = (comp.choices[0].message.content or "").strip()
+            # Strip code fences if present
+            content = raw
+            if content.startswith("```"):
+                # Remove leading fence line and trailing fence
+                parts = content.split("\n", 1)
+                content = parts[1] if len(parts) > 1 else content
+                if content.endswith("```"):
+                    content = content.rsplit("```", 1)[0]
+                content = content.strip()
+            # If still not clean, try to extract JSON array substring
+            def _extract_json_array(txt: str) -> str:
+                l = txt.find("[")
+                r = txt.rfind("]")
+                return txt[l:r+1] if l != -1 and r != -1 and r > l else txt
+            content = _extract_json_array(content)
+            # Parse and coerce into a normalized list of items
+            data = _json.loads(content)
+            if isinstance(data, dict):
+                items = [data]
+            elif isinstance(data, list):
+                items = data
+            else:
+                items = [str(data)]
+
+            # Normalize items
+            import uuid as _uuid
+            norm: list = []
+            for idx, itm in enumerate(items):
+                if isinstance(itm, str):
+                    obj = {"id": _uuid.uuid4().hex[:8], "title": itm, "completed": False, "priority": "medium"}
+                elif isinstance(itm, dict):
+                    obj = dict(itm)
+                    obj.setdefault("id", _uuid.uuid4().hex[:8])
+                    obj.setdefault("title", obj.get("task") or obj.get("name") or "Untitled")
+                    comp_val = obj.get("completed", False)
+                    if isinstance(comp_val, str):
+                        obj["completed"] = comp_val.lower() in ("true", "yes", "done")
+                    else:
+                        obj["completed"] = bool(comp_val)
+                    pr = str(obj.get("priority", "medium")).lower()
+                    if pr not in ("high", "medium", "low"):
+                        pr = "medium"
+                    obj["priority"] = pr
+                else:
+                    obj = {"id": _uuid.uuid4().hex[:8], "title": str(itm), "completed": False, "priority": "medium"}
+                norm.append({
+                    "id": str(obj.get("id")),
+                    "title": str(obj.get("title")),
+                    "completed": bool(obj.get("completed", False)),
+                    "priority": str(obj.get("priority", "medium")).lower(),
+                })
+            plan_obj = norm
+        except Exception as e:
+            raise HTTPException(status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Plan synthesis failed: {e}")
+
+        # 3) Store in daily_plans
+        plan_date = (payload.get("plan_date") or datetime.now().strftime("%Y-%m-%d"))
+        db = Database(db_path)
+        try:
+            db.init_schema()
+            payload_json = _json.dumps(plan_obj, ensure_ascii=False)
+            row_id = db.insert_daily_plan(plan_date=plan_date, plan_json=payload_json)
+            row = db.get_daily_plan(plan_date=plan_date)
+            # Validate round-trip
+            if not row or row.get("plan_json") != payload_json:
+                raise RuntimeError("Plan row not persisted correctly")
+        except Exception as e:
+            db.close()
+            raise HTTPException(status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"DB insert failed: {e}")
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+        return {
+            "id": row_id,
+            "status": "processed",
+            "path": str(path_val),
+            "plan_date": plan_date,
+            "plan": plan_obj,
+            "transcript_preview": transcript[:500],
+            "received_at": _time.time(),
+        }
 
     return app
 
