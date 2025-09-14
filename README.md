@@ -4,6 +4,14 @@ Chief of Time captures mouse/keyboard/window telemetry to SQLite, augments it wi
 screenshots + OCR + LLM summaries, and exposes an Agent + API for live notifications, daily
 summaries, daily plans, audio→plan ingestion, and an optional presence (avatar) integration.
 
+## Which technologies do we implement?
+- An scheduled OCR system for tracking your screen
+- A listener on your mouse, keyboard and clicks
+- An agent to determine is you are focused or not
+- An agent for understanding how did you perform along the day, scoring your respective sessions
+- Whisper, for obtaining the daily planning from an audio file
+- Lovable, for the frontend (https://github.com/alvaro-mazcu/chief-of-time-frontend)
+
 ## Install
 
 ```bash
