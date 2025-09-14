@@ -1,4 +1,4 @@
-# Chief of Time (formerly MouseTrace)
+# Chief of Time
 
 Chief of Time captures mouse/keyboard/window telemetry to SQLite, augments it with periodic
 screenshots + OCR + LLM summaries, and exposes an Agent + API for live notifications, daily
@@ -53,6 +53,10 @@ See `mousetrace/schema.sql` for full DDL and views.
 * `mousetrace sight` — periodic screenshots + OCR + LLM summaries stored in DB.
 * `mousetrace recreate-db --yes` — destructive reset + re-init.
 * `mousetrace seed-health` — add a sample sleep + activity record.
+
+## FRONTEND
+
+https://github.com/alvaro-mazcu/chief-of-time-frontend
 
 ## Launch at login (optional)
 
