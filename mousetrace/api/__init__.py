@@ -177,6 +177,54 @@ def create_app(db_path: Path) -> FastAPI:
         result = runner.ask(question=question, model=model, system_prompt=DAILY_SYSTEM_PROMPT)
         return result
 
+    # ---- Daily Plan (POST/GET) ----
+    class DailyPlanRequest(BaseModel):
+        plan_date: Optional[str] = None  # ISO date, defaults to today if omitted
+        plan: dict | list
+
+    class DailyPlanResponse(BaseModel):
+        id: int
+        plan_date: str
+        plan: dict | list
+        created_at: float
+
+    @app.post("/daily-plan", response_model=DailyPlanResponse)
+    def post_daily_plan(req: DailyPlanRequest) -> DailyPlanResponse:
+        import json as _json
+        from datetime import datetime
+        # Default plan_date to today (local date)
+        date_str = req.plan_date or datetime.now().strftime("%Y-%m-%d")
+        try:
+            plan_text = _json.dumps(req.plan, ensure_ascii=False)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid plan JSON: {e}")
+        db = Database(db_path)
+        try:
+            db.init_schema()
+            row_id = db.insert_daily_plan(plan_date=date_str, plan_json=plan_text)
+            row = db.get_daily_plan(plan_date=date_str)
+        finally:
+            db.close()
+        assert row is not None
+        return DailyPlanResponse(id=row_id, plan_date=row["plan_date"], plan=_json.loads(row["plan_json"]), created_at=row["created_at"])
+
+    @app.get("/daily-plan", response_model=DailyPlanResponse)
+    def get_daily_plan(plan_date: Optional[str] = None) -> DailyPlanResponse:
+        import json as _json
+        db = Database(db_path)
+        try:
+            row = db.get_daily_plan(plan_date=plan_date)
+        finally:
+            db.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="No daily plan found")
+        return DailyPlanResponse(
+            id=row["id"],
+            plan_date=row["plan_date"],
+            plan=_json.loads(row["plan_json"]),
+            created_at=row["created_at"],
+        )
+
     return app
 
 # Uvicorn reload/workers require an importable factory with no args.

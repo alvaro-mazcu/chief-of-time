@@ -119,6 +119,41 @@ class Database:
         self._conn.commit()
         return int(cur.lastrowid)
 
+    # --- daily plans ---
+    def insert_daily_plan(self, plan_date: str, plan_json: str) -> int:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO daily_plans(plan_date, plan_json, created_at)
+            VALUES (?,?,?)
+            ON CONFLICT(plan_date) DO UPDATE SET plan_json=excluded.plan_json, created_at=excluded.created_at
+            """,
+            (plan_date, plan_json, time.time()),
+        )
+        self._conn.commit()
+        # Return row id of the upserted/inserted row
+        row = self._conn.execute("SELECT id FROM daily_plans WHERE plan_date=?", (plan_date,)).fetchone()
+        return int(row[0])
+
+    def get_daily_plan(self, plan_date: Optional[str] = None) -> Optional[dict]:
+        if plan_date:
+            row = self._conn.execute(
+                "SELECT id, plan_date, plan_json, created_at FROM daily_plans WHERE plan_date=?",
+                (plan_date,),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT id, plan_date, plan_json, created_at FROM daily_plans ORDER BY plan_date DESC LIMIT 1"
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": int(row[0]),
+            "plan_date": str(row[1]),
+            "plan_json": str(row[2]),
+            "created_at": float(row[3]),
+        }
+
 
 class DBWriter:
     """Threaded writer that batches commits for low overhead."""

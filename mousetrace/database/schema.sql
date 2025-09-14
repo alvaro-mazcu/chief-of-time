@@ -154,3 +154,13 @@ CREATE TABLE IF NOT EXISTS activity_logs (
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity_logs(ts);
+
+-- Daily plans (one row per day, JSON payload)
+CREATE TABLE IF NOT EXISTS daily_plans (
+    id          INTEGER PRIMARY KEY,
+    plan_date   TEXT    NOT NULL,          -- ISO date (YYYY-MM-DD)
+    plan_json   TEXT    NOT NULL,          -- JSON-encoded plan (todo list, notes)
+    created_at  REAL    NOT NULL
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_daily_plans_date ON daily_plans(plan_date);

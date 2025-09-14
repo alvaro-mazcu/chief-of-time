@@ -215,6 +215,29 @@ def tool_activity_stats(db_path: Path, seconds: int = 86400) -> dict:
         conn.close()
 
 
+def tool_daily_plan(db_path: Path, plan_date: str | None = None) -> dict:
+    conn = sqlite3.connect(db_path)
+    try:
+        if plan_date:
+            row = conn.execute(
+                "SELECT plan_date, plan_json, created_at FROM daily_plans WHERE plan_date=?",
+                (plan_date,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT plan_date, plan_json, created_at FROM daily_plans ORDER BY plan_date DESC LIMIT 1"
+            ).fetchone()
+        if not row:
+            return {"plan": None}
+        try:
+            data = json.loads(row[1] or "{}")
+        except Exception:
+            data = row[1]
+        return {"plan_date": row[0], "plan": data, "created_at": float(row[2])}
+    finally:
+        conn.close()
+
+
 ToolFunc = Callable[..., Any]
 
 
@@ -234,6 +257,22 @@ def build_tools(db_path: Path, schema_path: Path) -> Tuple[Dict[str, Tuple[ToolF
                             "limit": {"type": "integer", "minimum": 1, "maximum": 10000, "default": 200},
                         },
                         "required": ["sql"],
+                    },
+                },
+            },
+        ),
+        "daily_plan": (
+            lambda plan_date=None: tool_daily_plan(db_path, plan_date=plan_date),
+            {
+                "type": "function",
+                "function": {
+                    "name": "daily_plan",
+                    "description": "Return the user's daily plan (latest or for a given YYYY-MM-DD).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "plan_date": {"type": "string", "description": "ISO date YYYY-MM-DD", "nullable": True},
+                        },
                     },
                 },
             },
