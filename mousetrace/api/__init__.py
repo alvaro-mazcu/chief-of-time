@@ -14,6 +14,7 @@ from ..agent.daily_prompt import DAILY_SYSTEM_PROMPT
 from ..config import get_openai_api_key
 from ..analysis import summary as db_summary
 from ..database.db import Database
+from ..audio.processor import transcribe_with_whisper, transcript_to_daily_plan
 
 
 class InsightRequest(BaseModel):
@@ -403,7 +404,6 @@ def create_app(db_path: Path) -> FastAPI:
         import time as _time
         from datetime import datetime
         from pathlib import Path as _Path
-        from openai import OpenAI
 
         # Parse body robustly (JSON or form)
         payload: dict
@@ -428,90 +428,22 @@ def create_app(db_path: Path) -> FastAPI:
         if not audio_path.exists():
             raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="File not found at path")
 
-        # OpenAI client
+        # Get API key for OpenAI
         try:
             key = get_openai_api_key(x_openai_key)
         except RuntimeError as e:
             raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
-        client = OpenAI(api_key=key)
 
         # 1) Transcribe with Whisper
         try:
-            with audio_path.open("rb") as f:
-                tr = client.audio.transcriptions.create(model="whisper-1", file=f)
-            transcript = (tr.text or "").strip()
+            transcript = transcribe_with_whisper(audio_path, api_key=key)
         except Exception as e:
             raise HTTPException(status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Transcription failed: {e}")
 
         # 2) Convert transcript to daily plan JSON via LLM
-        PLAN_SYSTEM = (
-            "You convert spoken notes into a daily plan as JSON. "
-            "Return ONLY a JSON array named implicitly (no key) with todo items. "
-            "Each item is an object: {id: string, title: string, completed: boolean, priority: one of 'high','medium','low'}. "
-            "Infer sensible priorities from wording; default completed=false. No extra text."
-        )
         try:
-            comp = client.chat.completions.create(
-                model=AgentConfig(db_path=db_path, schema_path=schema_path).model,
-                messages=[
-                    {"role": "system", "content": PLAN_SYSTEM},
-                    {"role": "user", "content": transcript},
-                ],
-                temperature=0.2,
-            )
-            raw = (comp.choices[0].message.content or "").strip()
-            # Strip code fences if present
-            content = raw
-            if content.startswith("```"):
-                # Remove leading fence line and trailing fence
-                parts = content.split("\n", 1)
-                content = parts[1] if len(parts) > 1 else content
-                if content.endswith("```"):
-                    content = content.rsplit("```", 1)[0]
-                content = content.strip()
-            # If still not clean, try to extract JSON array substring
-            def _extract_json_array(txt: str) -> str:
-                l = txt.find("[")
-                r = txt.rfind("]")
-                return txt[l:r+1] if l != -1 and r != -1 and r > l else txt
-            content = _extract_json_array(content)
-            # Parse and coerce into a normalized list of items
-            data = _json.loads(content)
-            if isinstance(data, dict):
-                items = [data]
-            elif isinstance(data, list):
-                items = data
-            else:
-                items = [str(data)]
-
-            # Normalize items
-            import uuid as _uuid
-            norm: list = []
-            for idx, itm in enumerate(items):
-                if isinstance(itm, str):
-                    obj = {"id": _uuid.uuid4().hex[:8], "title": itm, "completed": False, "priority": "medium"}
-                elif isinstance(itm, dict):
-                    obj = dict(itm)
-                    obj.setdefault("id", _uuid.uuid4().hex[:8])
-                    obj.setdefault("title", obj.get("task") or obj.get("name") or "Untitled")
-                    comp_val = obj.get("completed", False)
-                    if isinstance(comp_val, str):
-                        obj["completed"] = comp_val.lower() in ("true", "yes", "done")
-                    else:
-                        obj["completed"] = bool(comp_val)
-                    pr = str(obj.get("priority", "medium")).lower()
-                    if pr not in ("high", "medium", "low"):
-                        pr = "medium"
-                    obj["priority"] = pr
-                else:
-                    obj = {"id": _uuid.uuid4().hex[:8], "title": str(itm), "completed": False, "priority": "medium"}
-                norm.append({
-                    "id": str(obj.get("id")),
-                    "title": str(obj.get("title")),
-                    "completed": bool(obj.get("completed", False)),
-                    "priority": str(obj.get("priority", "medium")).lower(),
-                })
-            plan_obj = norm
+            model_name = AgentConfig(db_path=db_path, schema_path=schema_path).model
+            plan_obj = transcript_to_daily_plan(transcript, api_key=key, model=model_name)
         except Exception as e:
             raise HTTPException(status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Plan synthesis failed: {e}")
 
