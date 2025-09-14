@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from ..agent import AgentConfig, AgentRunner
@@ -27,8 +28,25 @@ class InsightResponse(BaseModel):
 
 def create_app(db_path: Path) -> FastAPI:
     app = FastAPI(title="MouseTrace Insights API", version="0.1.0")
+    # Enable CORS for frontend apps (handles OPTIONS preflight requests)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     # packaged schema lives under mousetrace/database/schema.sql
     schema_path = Path(__file__).resolve().parent.parent / "database" / "schema.sql"
+
+    # Ensure schema exists at startup so new tables (e.g., daily_plans) are present
+    try:
+        db = Database(db_path)
+        db.init_schema()
+        db.close()
+    except Exception:
+        # Defer error to endpoint usage to avoid crashing startup
+        pass
 
     def get_runner(x_openai_key: Optional[str] = Header(default=None)) -> AgentRunner:
         try:
@@ -174,30 +192,61 @@ def create_app(db_path: Path) -> FastAPI:
             f"Create a daily summary for the last {h} hours (window={seconds}s). "
             f"Use tools to gather facts and combine signals across inputs, screenshots, assessments, sleep, and activity."
         )
-        result = runner.ask(question=question, model=model, system_prompt=DAILY_SYSTEM_PROMPT)
+        result = runner.ask(question=question, model=model, system_prompt=DAILY_SYSTEM_PROMPT, max_turns=25)
         return result
 
     # ---- Daily Plan (POST/GET) ----
     class DailyPlanRequest(BaseModel):
         plan_date: Optional[str] = None  # ISO date, defaults to today if omitted
-        plan: dict | list
+        plan: Any  # accept any JSON structure (list or object)
 
     class DailyPlanResponse(BaseModel):
         id: int
         plan_date: str
-        plan: dict | list
+        plan: Any
         created_at: float
 
     @app.post("/daily-plan", response_model=DailyPlanResponse)
-    def post_daily_plan(req: DailyPlanRequest) -> DailyPlanResponse:
+    async def post_daily_plan(request: Request) -> DailyPlanResponse:
         import json as _json
         from datetime import datetime
-        # Default plan_date to today (local date)
-        date_str = req.plan_date or datetime.now().strftime("%Y-%m-%d")
+        # Accept flexible payloads: JSON object with {plan, plan_date}, or plain plan array/object
         try:
-            plan_text = _json.dumps(req.plan, ensure_ascii=False)
+            payload = await request.json()
+        except Exception:
+            # Try form fallback
+            try:
+                form = await request.form()
+                payload = {"plan": form.get("plan"), "plan_date": form.get("plan_date")}
+                # plan may be a JSON string in form data
+                if isinstance(payload["plan"], str):
+                    try:
+                        payload["plan"] = _json.loads(payload["plan"])  # type: ignore
+                    except Exception:
+                        pass
+            except Exception:
+                payload = None
+
+        if payload is None:
+            raise HTTPException(status_code=400, detail="Missing JSON body")
+
+        if isinstance(payload, list) or isinstance(payload, dict) and "plan" not in payload:
+            plan_obj = payload
+            plan_date = None
+        else:
+            plan_obj = payload.get("plan")
+            plan_date = payload.get("plan_date")
+
+        if plan_obj is None:
+            raise HTTPException(status_code=422, detail="Field 'plan' is required")
+
+        # Default plan_date to today (local date)
+        date_str = plan_date or datetime.now().strftime("%Y-%m-%d")
+        try:
+            plan_text = _json.dumps(plan_obj, ensure_ascii=False)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid plan JSON: {e}")
+
         db = Database(db_path)
         try:
             db.init_schema()
