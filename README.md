@@ -34,13 +34,27 @@ You may need to restart Terminal after toggling.
 
 ```bash
 # 1) Create/upgrade the database
-mousetrace init-db --db ~/mousetrace.sqlite
+python -m mousetrace init-db --db ~/mousetrace.sqlite
 
 # 2) Run the collector
-mousetrace run --db ~/mousetrace.sqlite --poll-hz 10 --move-hz 30
+python -m mousetrace run --db ~/mousetrace.sqlite --poll-hz 10 --move-hz 30
 
-# 3) Peek at some stats
-mousetrace analyze --db ~/mousetrace.sqlite --summary
+# 3) Run the notifier system on the background
+python -m mousetrace notify --db mouse_trace.sqlite3 --with-collector --interval 300 --icon /path/to/icon.png
+
+# 4) Run the auto-OCR system on the background
+python -m mousetrace sight --db mouse_trace.sqlite3 --interval 300 --out-dir ~/Pictures/mousetrace
+
+# 5) Peek at some stats
+python -m mousetrace analyze --db ~/mousetrace.sqlite --summary
+```
+
+## Frontend requirements
+
+For having all the system working, we need to run this:
+
+```bash
+python -m mousetrace serve --db mouse_trace.sqlite3 --reload
 ```
 
 ## Database
