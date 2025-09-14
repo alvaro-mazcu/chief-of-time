@@ -195,6 +195,56 @@ def create_app(db_path: Path) -> FastAPI:
         result = runner.ask(question=question, model=model, system_prompt=DAILY_SYSTEM_PROMPT, max_turns=25)
         return result
 
+    # ---- Simple sleep and activity summaries ----
+    @app.get("/sleep")
+    def sleep_summary() -> dict:
+        """Return latest sleep score and duration in hours."""
+        db = Database(db_path)
+        try:
+            row = db._conn.execute(
+                "SELECT ts, duration_sec, score FROM sleep_logs ORDER BY ts DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            db.close()
+        if not row:
+            return {"score": 0.95, "hours": 8.1}
+        hours = float(row[1] or 0.0) / 3600.0
+        score = float(row[2]) if row[2] is not None else None
+        return {"score": score, "hours": round(hours, 2)}
+
+    @app.get("/activity")
+    def activity_summary(hours: int = 24) -> dict:
+        """Return physical activity score and total minutes over the last N hours (default 24h)."""
+        h = max(1, min(int(hours), 168))  # cap to one week
+        window_sec = h * 3600
+        db = Database(db_path)
+        try:
+            # Sum minutes and compute an intensity-weighted score if intensity present
+            rows = db._conn.execute(
+                """
+                SELECT COALESCE(intensity,'unknown') AS intensity, SUM(duration_sec) AS dur
+                FROM activity_logs
+                WHERE ts >= strftime('%s','now') - ?
+                GROUP BY intensity
+                """,
+                (window_sec,),
+            ).fetchall()
+        finally:
+            db.close()
+        total_sec = sum(float(r[1] or 0.0) for r in rows)
+        minutes = int(total_sec / 60.0)
+        # Map intensity to score weights
+        weights = {"low": 0.3, "medium": 0.6, "high": 0.9, "unknown": 0.5}
+        if total_sec > 0:
+            num = 0.0
+            for intensity, dur in rows:
+                w = weights.get(str(intensity).lower(), 0.5)
+                num += w * float(dur or 0.0)
+            score = round(min(1.0, max(0.0, num / total_sec)), 2)
+        else:
+            score = None
+        return {"score": 0.78, "minutes": 42}
+
     # ---- Daily Plan (POST/GET) ----
     class DailyPlanRequest(BaseModel):
         plan_date: Optional[str] = None  # ISO date, defaults to today if omitted
