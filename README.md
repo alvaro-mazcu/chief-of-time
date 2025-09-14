@@ -1,7 +1,8 @@
-# MouseTrace (macOS)
+# Chief of Time (formerly MouseTrace)
 
-MouseTrace captures mouse events and **app/window switches** on macOS and stores them in a
-clean, queryable **SQLite** database.
+Chief of Time captures mouse/keyboard/window telemetry to SQLite, augments it with periodic
+screenshots + OCR + LLM summaries, and exposes an Agent + API for live notifications, daily
+summaries, daily plans, audio→plan ingestion, and an optional presence (avatar) integration.
 
 ## Install
 
@@ -48,6 +49,10 @@ See `mousetrace/schema.sql` for full DDL and views.
 * `mousetrace run` — start the capture service.
 * `mousetrace analyze` — quick, built-in summaries.
 * `mousetrace serve` — run the FastAPI insights API.
+* `mousetrace notify` — periodic macOS notifications about recent productivity.
+* `mousetrace sight` — periodic screenshots + OCR + LLM summaries stored in DB.
+* `mousetrace recreate-db --yes` — destructive reset + re-init.
+* `mousetrace seed-health` — add a sample sleep + activity record.
 
 ## Launch at login (optional)
 
@@ -61,9 +66,10 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.mousetrace.p
 
 MIT
 
-## FastAPI Insights API
+## API (FastAPI)
 
-The project ships an API that exposes summary endpoints and an OpenAI-powered agent to answer questions about your telemetry database.
+The API exposes summary endpoints, a structured daily summary (JSON), daily plans, audio upload and
+transcription into plans (Whisper + LLM), and optional presence (LiveKit + Beyond Presence).
 
 ### Configuration (.env)
 
@@ -94,14 +100,27 @@ MOUSETRACE_DB_PATH=~/mousetrace.sqlite uvicorn mousetrace.api:app_factory --fact
 ```
 ```
 
-### Endpoints
+### Endpoints (overview)
 
 - `GET /health` — liveness check.
 - `GET /schema` — returns the SQLite DDL shipped with the package.
 - `GET /summary` — quick stats: clicks, moves, switches, keypresses, KPM, best 1‑minute KPM and window, top apps.
-- `POST /insights` — ask a natural-language question; the agent will call safe tools against your DB.
+- `POST /insights` — free-form Q&A; the agent calls safe tools against your DB.
+- `GET /daily-summary?hours=24` — returns `{ answer, used_tools }`; `answer` is a JSON string with keys:
+  `general`, `productivity`, `focus`, `activity`, `sleep`, `key_moments`, `recommendations` — each `{ content, score }`.
+- `GET /assessments?limit=50` — recent 2‑minute verdicts.
+- `GET /screenshots?limit=50` and `GET /screenshots/{id}` — summaries and OCR text.
+- `GET /sleep` — latest sleep `{ score, hours }`.
+- `GET /activity?hours=24` — activity `{ score, minutes }` over window.
+- `POST /daily-plan` — store a daily plan (accepts `{ plan, plan_date? }` or raw array/object).
+- `GET /daily-plan?plan_date=YYYY-MM-DD` — returns the plan or latest.
+- `POST /upload-audio` — multipart `file` upload (webm/ogg/mpeg), returns storage path.
+- `POST /audio-available` — `{ path, plan_date? }` → transcribe with Whisper and store plan.
+- Presence (optional):
+  - `GET /presence/token?room=<room>&identity=<user>` → LiveKit browser token
+  - `POST /presence/speak` `{ room, text, voice?, avatar_id? }` → avatar says text
 
-Example:
+Examples:
 
 ```bash
 curl -H 'Content-Type: application/json' \
@@ -117,5 +136,15 @@ curl -H 'Content-Type: application/json' \
 
 ### Security notes
 
-- The agent has access only to read-only tools; arbitrary writes are blocked.
-- SQL tool only allows `SELECT`/CTEs and rejects mutating statements.
+- Read-only toolset for agent queries; SQL is limited to SELECT/CTEs.
+- Schema auto-initializes on API start; `init-db` is safe to run anytime.
+
+### Extra: Common run commands
+- Initialize DB: `python -m mousetrace init-db --db mouse_trace.sqlite3`
+- Run collector: `python -m mousetrace run --db mouse_trace.sqlite3 --poll-hz 10 --move-hz 30`
+- Run notifier: `python -m mousetrace notify --db mouse_trace.sqlite3 --interval 120`
+- Run screenshots: `python -m mousetrace sight --db mouse_trace.sqlite3 --interval 300 --out-dir ~/Pictures/mousetrace`
+- Start API: `python -m mousetrace serve --db mouse_trace.sqlite3 --reload`
+- Upload audio: `curl -F "file=@voice.webm" http://127.0.0.1:8000/upload-audio`
+- Process audio to plan: `curl -X POST http://127.0.0.1:8000/audio-available -H 'Content-Type: application/json' -d '{"path":"uploads/audio/voice-note-....webm"}'`
+- Get daily plan: `curl http://127.0.0.1:8000/daily-plan`
